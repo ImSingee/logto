@@ -15,8 +15,8 @@ export const logConditionGuard = object({
   logKey: string().optional(),
   hookId: string().optional(),
   result: nativeEnum(LogResult).optional(),
-  startTimeExclusive: string().optional(),
-  endTimeInclusive: string().optional(),
+  startTimeExclusive: string().regex(/^\d+$/).optional(),
+  endTimeInclusive: string().regex(/^\d+$/).optional(),
 });
 
 export type LogCondition = z.infer<typeof logConditionGuard>;

@@ -2,6 +2,7 @@ import { LogResult } from '@logto/schemas';
 import type { Log } from '@logto/schemas';
 import { pickDefault } from '@logto/shared/esm';
 
+import { type LogCondition } from '#src/queries/log.js';
 import { MockTenant } from '#src/test-utils/tenant.js';
 import { createRequester } from '#src/utils/test-utils.js';
 
@@ -33,17 +34,31 @@ describe('logRoutes', () => {
 
   describe('GET /logs', () => {
     it('should call countLogs and findLogs with correct parameters', async () => {
-      const userId = 'userIdValue';
-      const applicationId = 'foo';
-      const logKey = 'SignInUsernamePassword';
-      const page = 1;
-      const pageSize = 5;
+      const logCondition: LogCondition = {
+        userId: 'userIdValue',
+        applicationId: 'foo',
+        logKey: 'SignInUsernamePassword',
+        hookId: 'hookIdValue',
+        result: LogResult.Success,
+        startTimeExclusive: '123',
+        endTimeInclusive: '456',
+      };
 
-      await logRequest.get(
-        `/logs?userId=${userId}&applicationId=${applicationId}&logKey=${logKey}&page=${page}&page_size=${pageSize}`
-      );
-      expect(countLogs).toHaveBeenCalledWith({ userId, applicationId, logKey });
-      expect(findLogs).toHaveBeenCalledWith(5, 0, { userId, applicationId, logKey });
+      const pagination = {
+        page: 1,
+        pageSize: 5,
+      };
+
+      const queryString = new URLSearchParams({
+        ...logCondition,
+        page: String(pagination.page),
+        page_size: String(pagination.pageSize),
+      }).toString();
+
+      await logRequest.get(`/logs?${queryString}`);
+
+      expect(countLogs).toHaveBeenCalledWith(logCondition);
+      expect(findLogs).toHaveBeenCalledWith(pagination.pageSize, pagination.page - 1, logCondition);
     });
 
     it('should return correct response', async () => {
