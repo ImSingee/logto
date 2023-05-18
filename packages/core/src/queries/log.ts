@@ -3,31 +3,51 @@ import { token, Logs } from '@logto/schemas';
 import { conditionalSql, convertToIdentifiers } from '@logto/shared';
 import type { CommonQueryMethods } from 'slonik';
 import { sql } from 'slonik';
+import { object, string, type z } from 'zod';
 
 import { buildFindEntityByIdWithPool } from '#src/database/find-entity-by-id.js';
 import { buildInsertIntoWithPool } from '#src/database/insert-into.js';
 
 const { table, fields } = convertToIdentifiers(Logs);
 
-export type LogCondition = {
-  logKey?: string;
-  applicationId?: string;
-  userId?: string;
-};
+export const logConditionGuard = object({
+  userId: string().optional(),
+  applicationId: string().optional(),
+  logKey: string().optional(),
+  hookId: string().optional(),
+  startTimeExclusive: string().optional(),
+  endTimeInclusive: string().optional(),
+});
+
+export type LogCondition = z.infer<typeof logConditionGuard>;
 
 const buildLogConditionSql = (logCondition: LogCondition) =>
-  conditionalSql(logCondition, ({ logKey, applicationId, userId }) => {
-    const subConditions = [
-      conditionalSql(logKey, (logKey) => sql`${fields.key}=${logKey}`),
-      conditionalSql(userId, (userId) => sql`${fields.payload}->>'userId'=${userId}`),
-      conditionalSql(
-        applicationId,
-        (applicationId) => sql`${fields.payload}->>'applicationId'=${applicationId}`
-      ),
-    ].filter(({ sql }) => sql);
+  conditionalSql(
+    logCondition,
+    ({ logKey, applicationId, userId, hookId, startTimeExclusive, endTimeInclusive }) => {
+      const subConditions = [
+        conditionalSql(logKey, (logKey) => sql`${fields.key}=${logKey}`),
+        conditionalSql(userId, (userId) => sql`${fields.payload}->>'userId'=${userId}`),
+        conditionalSql(
+          applicationId,
+          (applicationId) => sql`${fields.payload}->>'applicationId'=${applicationId}`
+        ),
+        conditionalSql(hookId, (hookId) => sql`${fields.payload}->>'hookId'=${hookId}`),
+        conditionalSql(
+          startTimeExclusive,
+          (startTimeExclusive) =>
+            sql`${fields.createdAt} > to_timestamp(${startTimeExclusive}::double precision / 1000)`
+        ),
+        conditionalSql(
+          endTimeInclusive,
+          (endTimeInclusive) =>
+            sql`${fields.createdAt} <= to_timestamp(${endTimeInclusive}::double precision / 1000)`
+        ),
+      ].filter(({ sql }) => sql);
 
-    return subConditions.length > 0 ? sql`where ${sql.join(subConditions, sql` and `)}` : sql``;
-  });
+      return subConditions.length > 0 ? sql`where ${sql.join(subConditions, sql` and `)}` : sql``;
+    }
+  );
 
 export const createLogQueries = (pool: CommonQueryMethods) => {
   const insertLog = buildInsertIntoWithPool(pool)(Logs);
