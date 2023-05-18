@@ -16,6 +16,7 @@ import TabNav, { TabNavItem } from '@/components/TabNav';
 import UserName from '@/components/UserName';
 import { logEventTitle } from '@/consts/logs';
 import type { RequestError } from '@/hooks/use-api';
+import { getUserTitle } from '@/utils/user';
 
 import EventIcon from './components/EventIcon';
 import * as styles from './index.module.scss';
@@ -37,7 +38,7 @@ function AuditLogDetails() {
 
   const backLink = getAuditLogDetailsRelatedResourceLink(pathname);
   const backLinkTitle = id
-    ? t('log_details.back_to_user', { name: userData?.name ?? t('users.unnamed') })
+    ? t('log_details.back_to_user', { name: getUserTitle(userData) })
     : t('log_details.back_to_logs');
 
   if (!logId) {
