@@ -7,7 +7,6 @@ import {
 } from '@logto/schemas';
 import { generateStandardId } from '@logto/shared';
 import { conditional, pick, trySafe } from '@silverhand/essentials';
-import type { Response } from 'got';
 import { got, HTTPError } from 'got';
 import type Provider from 'oidc-provider';
 
@@ -15,11 +14,7 @@ import { LogEntry } from '#src/middleware/koa-audit-log.js';
 import type Queries from '#src/tenants/Queries.js';
 import { consoleLog } from '#src/utils/console.js';
 
-const parseResponse = ({ statusCode, body }: Response) => ({
-  statusCode,
-  // eslint-disable-next-line no-restricted-syntax
-  body: trySafe(() => JSON.parse(String(body)) as unknown) ?? String(body),
-});
+import { createHookRequestOptions, parseResponse } from './utils.js';
 
 const eventToHook: Record<InteractionEvent, HookEvent> = {
   [InteractionEvent.Register]: HookEvent.PostRegister,
@@ -81,7 +76,7 @@ export const createHookLibrary = (queries: Queries) => {
     } satisfies Omit<HookEventPayload, 'hookId'>;
 
     await Promise.all(
-      rows.map(async ({ config: { url, headers, retries }, id }) => {
+      rows.map(async ({ config: { url, headers, retries }, id, signingKey }) => {
         consoleLog.info(`\tTriggering hook ${id} due to ${hookEvent} event`);
         const json: HookEventPayload = { hookId: id, ...payload };
         const logEntry = new LogEntry(`TriggerHook.${hookEvent}`);
@@ -90,12 +85,10 @@ export const createHookLibrary = (queries: Queries) => {
 
         // Trigger web hook and log response
         await got
-          .post(url, {
-            headers: { 'user-agent': 'Logto (https://logto.io)', ...headers },
-            json,
-            retry: { limit: retries ?? 3 },
-            timeout: { request: 10_000 },
-          })
+          .post(
+            url,
+            createHookRequestOptions({ signingKey, payload: json, customHeaders: headers, retries })
+          )
           .then(async (response) => {
             logEntry.append({
               response: parseResponse(response),

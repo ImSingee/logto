@@ -3,7 +3,9 @@ import { HookEvent, InteractionEvent, LogResult } from '@logto/schemas';
 import { createMockUtils } from '@logto/shared/esm';
 import { got } from 'got';
 
-import type { Interaction } from './hook.js';
+import { generateSignature } from '#src/utils/signature.js';
+
+import type { Interaction } from './index.js';
 
 const { jest } = import.meta;
 const { mockEsmWithActual } = createMockUtils(jest);
@@ -38,7 +40,7 @@ const post = jest
 const insertLog = jest.fn();
 const findAllHooks = jest.fn().mockResolvedValue([hook]);
 
-const { createHookLibrary } = await import('./hook.js');
+const { createHookLibrary } = await import('./index.js');
 const { triggerInteractionHooksIfNeeded } = createHookLibrary(
   new MockQueries({
     // @ts-expect-error
@@ -76,19 +78,27 @@ describe('triggerInteractionHooksIfNeeded()', () => {
       } as Interaction
     );
 
+    const expectedPayload = {
+      hookId: 'foo',
+      event: 'PostSignIn',
+      interactionEvent: 'SignIn',
+      sessionId: 'some_jti',
+      userId: '123',
+      user: { id: 'user_id', username: 'user' },
+      application: { id: 'app_id' },
+      createdAt: new Date(100_000).toISOString(),
+    };
+
+    const expectedSignature = generateSignature(hook.signingKey, expectedPayload);
+
     expect(findAllHooks).toHaveBeenCalled();
     expect(post).toHaveBeenCalledWith(url, {
-      headers: { 'user-agent': 'Logto (https://logto.io)', bar: 'baz' },
-      json: {
-        hookId: 'foo',
-        event: 'PostSignIn',
-        interactionEvent: 'SignIn',
-        sessionId: 'some_jti',
-        userId: '123',
-        user: { id: 'user_id', username: 'user' },
-        application: { id: 'app_id' },
-        createdAt: new Date(100_000).toISOString(),
+      headers: {
+        'user-agent': 'Logto (https://logto.io)',
+        bar: 'baz',
+        'x-logto-signature-256': expectedSignature,
       },
+      json: expectedPayload,
       retry: { limit: 3 },
       timeout: { request: 10_000 },
     });
