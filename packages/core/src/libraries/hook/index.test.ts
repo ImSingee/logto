@@ -1,14 +1,22 @@
-import type { Hook } from '@logto/schemas';
-import { HookEvent, InteractionEvent, LogResult } from '@logto/schemas';
+import {
+  type Application,
+  ApplicationType,
+  type Hook,
+  type HookEventPayload,
+  HookEvent,
+  InteractionEvent,
+  LogResult,
+  type User,
+  type userInfoSelectFields,
+} from '@logto/schemas';
 import { createMockUtils } from '@logto/shared/esm';
 import { got } from 'got';
 
-import { generateSignature } from '#src/utils/signature.js';
-
 import type { Interaction } from './index.js';
+import { createHookRequestOptions } from './utils.js';
 
 const { jest } = import.meta;
-const { mockEsmWithActual } = createMockUtils(jest);
+const { mockEsmWithActual, mockEsm } = createMockUtils(jest);
 
 const nanoIdMock = 'mockId';
 await mockEsmWithActual('@logto/shared', () => ({
@@ -16,6 +24,10 @@ await mockEsmWithActual('@logto/shared', () => ({
   buildIdGenerator: () => () => nanoIdMock,
   generateStandardId: () => nanoIdMock,
 }));
+
+mockEsm('#src/utils/signature.js', () => {
+  return { generateSignature: jest.fn(() => 'mock-signature') };
+});
 
 const { MockQueries } = await import('#src/test-utils/tenant.js');
 
@@ -32,6 +44,32 @@ const hook: Hook = {
   createdAt: Date.now() / 1000,
 };
 
+const mockApplication: Pick<Application, 'id' | 'type' | 'name' | 'description'> = {
+  id: 'app_id',
+  type: ApplicationType.Traditional,
+  name: 'app_name',
+  description: 'Mock Application For Test',
+};
+
+const mockUser: {
+  [K in (typeof userInfoSelectFields)[number]]: User[K];
+} = {
+  id: 'user_id',
+  name: 'user_name',
+  username: 'user',
+  primaryEmail: null,
+  primaryPhone: null,
+  avatar: null,
+  customData: {},
+  identities: {},
+  lastSignInAt: null,
+  createdAt: new Date(100_000).getTime(),
+  applicationId: 'app_id',
+  isSuspended: false,
+};
+
+const mockUserAgent = 'Mock User Agent';
+
 const post = jest
   .spyOn(got, 'post')
   // @ts-expect-error
@@ -44,10 +82,10 @@ const { createHookLibrary } = await import('./index.js');
 const { triggerInteractionHooksIfNeeded } = createHookLibrary(
   new MockQueries({
     // @ts-expect-error
-    users: { findUserById: () => ({ id: 'user_id', username: 'user', extraField: 'not_ok' }) },
+    users: { findUserById: () => mockUser },
     applications: {
       // @ts-expect-error
-      findApplicationById: async () => ({ id: 'app_id', extraField: 'not_ok' }),
+      findApplicationById: async () => mockApplication,
     },
     logs: { insertLog },
     hooks: { findAllHooks },
@@ -75,34 +113,31 @@ describe('triggerInteractionHooksIfNeeded()', () => {
         jti: 'some_jti',
         result: { login: { accountId: '123' } },
         params: { client_id: 'some_client' },
-      } as Interaction
+      } as Interaction,
+      mockUserAgent
     );
 
-    const expectedPayload = {
+    const expectedPayload: HookEventPayload = {
       hookId: 'foo',
-      event: 'PostSignIn',
+      event: HookEvent.PostSignIn,
       interactionEvent: 'SignIn',
-      sessionId: 'some_jti',
-      userId: '123',
-      user: { id: 'user_id', username: 'user' },
-      application: { id: 'app_id' },
       createdAt: new Date(100_000).toISOString(),
+      sessionId: 'some_jti',
+      userAgent: mockUserAgent,
+      userId: '123',
+      user: mockUser,
+      application: mockApplication,
     };
 
-    const expectedSignature = generateSignature(hook.signingKey, expectedPayload);
-
-    expect(findAllHooks).toHaveBeenCalled();
-    expect(post).toHaveBeenCalledWith(url, {
-      headers: {
-        'user-agent': 'Logto (https://logto.io)',
-        bar: 'baz',
-        'x-logto-signature-256': expectedSignature,
-      },
-      json: expectedPayload,
-      retry: { limit: 3 },
-      timeout: { request: 10_000 },
+    const expectedWebhookRequestOptions = createHookRequestOptions({
+      signingKey: hook.signingKey,
+      payload: expectedPayload,
+      customHeaders: hook.config.headers,
+      retries: hook.config.retries,
     });
 
+    expect(findAllHooks).toHaveBeenCalled();
+    expect(post).toHaveBeenCalledWith(url, expectedWebhookRequestOptions);
     const calledPayload: unknown = insertLog.mock.calls[0][0];
     expect(calledPayload).toHaveProperty('id', nanoIdMock);
     expect(calledPayload).toHaveProperty('key', 'TriggerHook.' + HookEvent.PostSignIn);
