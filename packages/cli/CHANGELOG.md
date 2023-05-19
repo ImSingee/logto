@@ -1,5 +1,13 @@
 # Change Log
 
+## 1.3.2
+
+### Patch Changes
+
+- Updated dependencies [497d5b526]
+  - @logto/phrases@1.3.0
+  - @logto/schemas@1.3.2
+
 ## 1.3.1
 
 ### Patch Changes
