@@ -1,19 +1,19 @@
 import {
-  type Application,
-  ApplicationType,
-  type Hook,
   type HookEventPayload,
   HookEvent,
   InteractionEvent,
   LogResult,
-  type User,
+  type Application,
+  ApplicationType,
   type userInfoSelectFields,
+  type User,
+  type Hook,
 } from '@logto/schemas';
 import { createMockUtils } from '@logto/shared/esm';
 import { got } from 'got';
 
 import type { Interaction } from './index.js';
-import { createHookRequestOptions } from './utils.js';
+import { parseResponse } from './utils.js';
 
 const { jest } = import.meta;
 const { mockEsmWithActual, mockEsm } = createMockUtils(jest);
@@ -25,24 +25,7 @@ await mockEsmWithActual('@logto/shared', () => ({
   generateStandardId: () => nanoIdMock,
 }));
 
-mockEsm('#src/utils/signature.js', () => {
-  return { generateSignature: jest.fn(() => 'mock-signature') };
-});
-
-const { MockQueries } = await import('#src/test-utils/tenant.js');
-
-const url = 'https://logto.gg';
-const hook: Hook = {
-  tenantId: 'bar',
-  id: 'foo',
-  name: 'hook_name',
-  event: HookEvent.PostSignIn,
-  events: [HookEvent.PostSignIn],
-  signingKey: 'signing_key',
-  enabled: true,
-  config: { headers: { bar: 'baz' }, url, retries: 3 },
-  createdAt: Date.now() / 1000,
-};
+const mockUserAgent = 'Mock User Agent';
 
 const mockApplication: Pick<Application, 'id' | 'type' | 'name' | 'description'> = {
   id: 'app_id',
@@ -68,7 +51,48 @@ const mockUser: {
   isSuspended: false,
 };
 
-const mockUserAgent = 'Mock User Agent';
+const url = 'https://logto.gg';
+const mockEvent = HookEvent.PostSignIn;
+const hook: Hook = {
+  tenantId: 'bar',
+  id: 'foo',
+  name: 'hook_name',
+  event: mockEvent,
+  events: [mockEvent],
+  signingKey: 'signing_key',
+  enabled: true,
+  config: { headers: { bar: 'baz' }, url, retries: 3 },
+  createdAt: Date.now() / 1000,
+};
+
+const mockHookEventPayload: HookEventPayload = {
+  hookId: hook.id,
+  event: mockEvent,
+  interactionEvent: 'SignIn',
+  createdAt: new Date(100_000).toISOString(),
+  sessionId: 'some_jti',
+  userAgent: 'Mock User Agent',
+  userId: '123',
+  user: mockUser,
+  application: mockApplication,
+};
+
+const mockHookRequestOptions = {
+  headers: {
+    'user-agent': 'Logto (https://logto.io)',
+    'x-logto-signature-256': 'mock_signature',
+  },
+  json: mockHookEventPayload,
+  retry: { limit: 3 },
+  timeout: { request: 10_000 },
+};
+
+mockEsm('./utils.js', () => ({
+  parseResponse,
+  createHookRequestOptions: jest.fn(() => mockHookRequestOptions),
+}));
+
+const { MockQueries } = await import('#src/test-utils/tenant.js');
 
 const post = jest
   .spyOn(got, 'post')
@@ -117,36 +141,17 @@ describe('triggerInteractionHooksIfNeeded()', () => {
       mockUserAgent
     );
 
-    const expectedPayload: HookEventPayload = {
-      hookId: 'foo',
-      event: HookEvent.PostSignIn,
-      interactionEvent: 'SignIn',
-      createdAt: new Date(100_000).toISOString(),
-      sessionId: 'some_jti',
-      userAgent: mockUserAgent,
-      userId: '123',
-      user: mockUser,
-      application: mockApplication,
-    };
-
-    const expectedWebhookRequestOptions = createHookRequestOptions({
-      signingKey: hook.signingKey,
-      payload: expectedPayload,
-      customHeaders: hook.config.headers,
-      retries: hook.config.retries,
-    });
-
     expect(findAllHooks).toHaveBeenCalled();
-    expect(post).toHaveBeenCalledWith(url, expectedWebhookRequestOptions);
+    expect(post).toHaveBeenCalledWith(url, mockHookRequestOptions);
     const calledPayload: unknown = insertLog.mock.calls[0][0];
     expect(calledPayload).toHaveProperty('id', nanoIdMock);
-    expect(calledPayload).toHaveProperty('key', 'TriggerHook.' + HookEvent.PostSignIn);
+    expect(calledPayload).toHaveProperty('key', 'TriggerHook.' + mockEvent);
     expect(calledPayload).toHaveProperty('payload.result', LogResult.Success);
-    expect(calledPayload).toHaveProperty('payload.hookId', 'foo');
-    expect(calledPayload).toHaveProperty('payload.json.event', HookEvent.PostSignIn);
+    expect(calledPayload).toHaveProperty('payload.hookId', hook.id);
+    expect(calledPayload).toHaveProperty('payload.json.event', mockHookEventPayload.event);
     expect(calledPayload).toHaveProperty('payload.json.interactionEvent', InteractionEvent.SignIn);
-    expect(calledPayload).toHaveProperty('payload.json.hookId', 'foo');
-    expect(calledPayload).toHaveProperty('payload.json.userId', '123');
+    expect(calledPayload).toHaveProperty('payload.json.hookId', mockHookEventPayload.hookId);
+    expect(calledPayload).toHaveProperty('payload.json.userId', mockHookEventPayload.userId);
     expect(calledPayload).toHaveProperty('payload.response.statusCode', 200);
     expect(calledPayload).toHaveProperty('payload.response.body.message', 'ok');
     jest.useRealTimers();
